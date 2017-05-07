@@ -5,6 +5,7 @@ package log4go
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -59,14 +60,29 @@ func (w *FileLogWriter) Close() {
 //
 // The standard log-line format is:
 //   [%D %T] [%L] (%S) %M
-func NewFileLogWriter(fname string, rotate bool) *FileLogWriter {
+func NewFileLogWriter(fname string, rotate bool, lformat string, fsize int, maxbcp int) *FileLogWriter {
+	err := checkDir(fname)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FileLogWriter(%q): %s\n", fname, err)
+		return nil
+	}
+	if lformat == "" {
+		lformat = FORMAT_DEFAULT
+	}
+	if fsize == 0 {
+		fsize = 2
+	}
+	if maxbcp == 0 {
+		maxbcp = 999
+	}
 	w := &FileLogWriter{
-		rec:       make(chan *LogRecord, LogBufferLength),
-		rot:       make(chan bool),
-		filename:  fname,
-		format:    "[%D %T] [%L] (%S) %M",
-		rotate:    rotate,
-		maxbackup: 999,
+		rec:		make(chan *LogRecord, LogBufferLength),
+		rot:		make(chan bool),
+		filename:	fname,
+		format:		lformat,
+		rotate:		rotate,
+		maxsize:	fsize*1024,
+		maxbackup:	maxbcp,
 	}
 
 	// open the file for the first time
@@ -136,8 +152,8 @@ func (w *FileLogWriter) intRotate() error {
 
 	// If we are keeping log files, move it to the next available number
 	if w.rotate {
-		_, err := os.Lstat(w.filename)
-		if err == nil { // file exists
+		finfo, err := os.Lstat(w.filename)
+		if err == nil && int(finfo.Size()) >= w.maxsize { // file exists
 			// Find the next available number
 			num := 1
 			fname := ""
@@ -255,10 +271,26 @@ func (w *FileLogWriter) SetRotate(rotate bool) *FileLogWriter {
 // NewXMLLogWriter is a utility method for creating a FileLogWriter set up to
 // output XML record log messages instead of line-based ones.
 func NewXMLLogWriter(fname string, rotate bool) *FileLogWriter {
-	return NewFileLogWriter(fname, rotate).SetFormat(
+	return NewFileLogWriter(fname, rotate, "", 0, 0).SetFormat(
 		`	<record level="%L">
 		<timestamp>%D %T</timestamp>
 		<source>%S</source>
 		<message>%M</message>
 	</record>`).SetHeadFoot("<log created=\"%D %T\">", "</log>")
+}
+
+// Check directory for log-files exists
+func checkDir(fname string) error {
+	if !filepath.IsAbs(fname) {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		fname = filepath.Join(cwd, fname)
+	}
+	dir, err := filepath.Abs(filepath.Dir(fname))
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(dir, os.ModeDir)
 }
